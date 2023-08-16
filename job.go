@@ -25,6 +25,8 @@ const (
 	SelectorLabel        = "kubejob.io/id"
 	DefaultJobName       = "kubejob-"
 	DefaultContainerName = "kubejob"
+
+	jobTrackingFinalizer = "batch.kubernetes.io/job-tracking"
 )
 
 type LogLevel int
@@ -51,9 +53,7 @@ func (l LogLevel) String() string {
 	return ""
 }
 
-var (
-	ExecRetryCount = 8
-)
+var ExecRetryCount = 8
 
 type Job struct {
 	*batchv1.Job
@@ -77,8 +77,10 @@ type Job struct {
 	propagationPolicy        *metav1.DeletionPropagation
 }
 
-type ContainerLogger func(*ContainerLog)
-type Logger func(string)
+type (
+	ContainerLogger func(*ContainerLog)
+	Logger          func(string)
+)
 
 type ContainerLog struct {
 	Pod        *corev1.Pod
@@ -150,6 +152,10 @@ func (j *Job) cleanup(ctx context.Context) error {
 	}
 	j.logDebug("%d pods found", len(podList.Items))
 	for _, pod := range podList.Items {
+		if _, ok := pod.Annotations[jobTrackingFinalizer]; ok {
+			j.logDebug("don't delete pod: %s job-id: %s", pod.Name, pod.Labels[SelectorLabel])
+			continue
+		}
 		j.logDebug("delete pod: %s job-id: %s", pod.Name, pod.Labels[SelectorLabel])
 		if err := j.podClient.Delete(ctx, pod.Name, metav1.DeleteOptions{
 			GracePeriodSeconds: new(int64), // assign zero value as GracePeriodSeconds to delete immediately.
